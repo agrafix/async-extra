@@ -53,7 +53,7 @@ mapConcurrentlyBatched ::
     => Int -> ([[b]] -> m r) -> (a -> m b) -> t a -> m r
 mapConcurrentlyBatched batchSize merge action items = withRunInIO $ \run ->
     do let chunks = chunksOf batchSize $ F.toList items
-       r <- mapConcurrently (\x -> force <$> mapM (run . action) x) chunks
+       r <- mapConcurrently (fmap force . mapM (run . action)) chunks
        run $ merge r
 
 -- | Split input into N chunks with equal length and work on
