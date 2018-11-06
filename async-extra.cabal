@@ -1,5 +1,5 @@
 name:                async-extra
-version:             0.2.0.0
+version:             0.3.0.0
 synopsis:            Useful concurrent combinators
 description:         Various concurrent combinators
 homepage:            https://github.com/agrafix/async-extra#readme
@@ -21,7 +21,8 @@ library
   build-depends:       base >= 4.8 && < 5,
                        async,
                        deepseq >= 1.4,
-                       split >= 0.2
+                       split >= 0.2,
+                       unliftio-core
   default-language:    Haskell2010
 
 source-repository head

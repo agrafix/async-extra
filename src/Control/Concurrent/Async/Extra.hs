@@ -16,53 +16,57 @@ import Control.Concurrent.Async
 import Control.DeepSeq
 import Control.Exception
 import Control.Monad
+import Control.Monad.IO.Unlift
 import Data.List.Split (chunksOf)
+
 import qualified Control.Concurrent.QSem as S
 import qualified Data.Foldable as F
 
 -- | Span a green thread for each task, but only execute N tasks
 -- concurrently. Ignore the result
-mapConcurrentlyBounded_ :: Traversable t => Int -> (a -> IO ()) -> t a -> IO ()
-mapConcurrentlyBounded_ bound action =
-    void . mapConcurrentlyBounded bound action
+mapConcurrentlyBounded_ ::
+  (MonadUnliftIO m, Traversable t) => Int -> (a -> m ()) -> t a -> m ()
+mapConcurrentlyBounded_ bound action items =
+  void $ withRunInIO $ \run ->
+    mapConcurrentlyBounded bound (run . action) items
 
 -- | Span a green thread for each task, but only execute N tasks
 -- concurrently.
-mapConcurrentlyBounded :: Traversable t => Int -> (a -> IO b) -> t a -> IO (t b)
-mapConcurrentlyBounded bound action items =
+mapConcurrentlyBounded :: (MonadUnliftIO m, Traversable t) => Int -> (a -> m b) -> t a -> m (t b)
+mapConcurrentlyBounded bound action items = withRunInIO $ \run ->
     do qs <- S.newQSem bound
        let wrappedAction x =
-               bracket_ (S.waitQSem qs) (S.signalQSem qs) (action x)
+               bracket_ (S.waitQSem qs) (S.signalQSem qs) (run $ action x)
        mapConcurrently wrappedAction items
 
 -- | Span green threads to perform N (batch size) tasks in one thread
 -- and ignore results
 mapConcurrentlyBatched_ ::
-    (Foldable t) => Int -> (a -> IO ()) -> t a -> IO ()
+    (MonadUnliftIO m, Foldable t) => Int -> (a -> m ()) -> t a -> m ()
 mapConcurrentlyBatched_ batchSize =
     mapConcurrentlyBatched batchSize (const $ pure ())
 
 -- | Span green threads to perform N (batch size) tasks in one thread
 -- and merge results using provided merge function
 mapConcurrentlyBatched ::
-    (NFData b, Foldable t)
-    => Int -> ([[b]] -> IO r) -> (a -> IO b) -> t a -> IO r
-mapConcurrentlyBatched batchSize merge action items =
+    (MonadUnliftIO m, NFData b, Foldable t)
+    => Int -> ([[b]] -> m r) -> (a -> m b) -> t a -> m r
+mapConcurrentlyBatched batchSize merge action items = withRunInIO $ \run ->
     do let chunks = chunksOf batchSize $ F.toList items
-       r <- mapConcurrently (\x -> force <$> mapM action x) chunks
-       merge r
+       r <- mapConcurrently (fmap force . mapM (run . action)) chunks
+       run $ merge r
 
 -- | Split input into N chunks with equal length and work on
 -- each chunk in a dedicated green thread. Ignore results
-mapConcurrentlyChunks_ :: (Foldable t) => Int -> (a -> IO ()) -> t a -> IO ()
+mapConcurrentlyChunks_ :: (MonadUnliftIO m, Foldable t) => Int -> (a -> m ()) -> t a -> m ()
 mapConcurrentlyChunks_ chunkCount =
     mapConcurrentlyChunks chunkCount (const $ pure ())
 
 -- | Split input into N chunks with equal length and work on
 -- each chunk in a dedicated green thread. Then merge results using provided merge function
 mapConcurrentlyChunks ::
-    (NFData b, Foldable t)
-    => Int -> ([[b]] -> IO r) -> (a -> IO b) -> t a -> IO r
+    (MonadUnliftIO m, NFData b, Foldable t)
+    => Int -> ([[b]] -> m r) -> (a -> m b) -> t a -> m r
 mapConcurrentlyChunks chunkCount merge action items =
     do let listSize = F.length items
            batchSize :: Double
